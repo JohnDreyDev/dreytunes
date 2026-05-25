@@ -1,50 +1,3 @@
-const localSongs = [{
-        id: 1,
-        title: "Eternal Dawn",
-        artist: "SoundHelix",
-        genre: "Ambient",
-        url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3",
-        source: "Sample",
-        full: false
-    },
-    {
-        id: 2,
-        title: "Crystal Waves",
-        artist: "SoundHelix",
-        genre: "Electronic",
-        url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-2.mp3",
-        source: "Sample",
-        full: false
-    },
-    {
-        id: 3,
-        title: "Midnight Echo",
-        artist: "SoundHelix",
-        genre: "Chill",
-        url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-3.mp3",
-        source: "Sample",
-        full: false
-    },
-    {
-        id: 4,
-        title: "Rising Tide",
-        artist: "SoundHelix",
-        genre: "Lo-fi",
-        url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-4.mp3",
-        source: "Sample",
-        full: false
-    },
-    {
-        id: 5,
-        title: "City Lights",
-        artist: "SoundHelix",
-        genre: "Pop",
-        url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-5.mp3",
-        source: "Sample",
-        full: false
-    }
-];
-
 const uploadedSongs = [];
 const queue = [];
 let currentSong = null;
@@ -57,7 +10,6 @@ const audioPlayer = document.getElementById("audioPlayer");
 const nowPlayingTitle = document.getElementById("nowPlayingTitle");
 const nowPlayingArtist = document.getElementById("nowPlayingArtist");
 const fileUpload = document.getElementById("fileUpload");
-const sourceFilter = document.getElementById("sourceFilter");
 const queueList = document.getElementById("queueList");
 const queueCount = document.getElementById("queueCount");
 const queueButton = document.getElementById("queueButton");
@@ -67,20 +19,20 @@ const STORAGE_KEY = "music-player-queue";
 let dragCounter = 0;
 
 function sanitizeFileName(text) {
-    return text.replace(/[^a-z0-9\.\- _]/gi, "_");
+    return text.replace(/[^a-z0-9.\- _]/gi, "_");
 }
 
 function highlightText(text, query) {
     if (!query) return text;
-    const escaped = query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const escaped = query.replace(/[.*+?^${}()|[\]\\]/g, String.raw `\$&`);
     return text.replace(new RegExp(escaped, "gi"), match => `<mark>${match}</mark>`);
 }
 
 function getLibrary() {
-    return [...uploadedSongs, ...localSongs];
+    return [...uploadedSongs];
 }
 
-function searchLocalSongs(query) {
+function searchUploadSongs(query) {
     const lowerQuery = query.toLowerCase();
     return getLibrary().map(song => ({
         ...song,
@@ -92,12 +44,39 @@ function searchLocalSongs(query) {
     });
 }
 
+function mapApiResults(results, query) {
+    return results.map(result => ({
+        id: `itunes-${result.trackId}`,
+        title: result.trackName,
+        artist: result.artistName,
+        genre: result.primaryGenreName || "Music",
+        url: result.previewUrl,
+        source: "iTunes",
+        full: false,
+        highlightedTitle: highlightText(result.trackName, query),
+        highlightedArtist: highlightText(result.artistName, query),
+        highlightedGenre: highlightText(result.primaryGenreName || "Music", query)
+    }));
+}
+
+async function fetchItunesSongs(query) {
+    try {
+        const url = `${ITUNES_API_URL}?term=${encodeURIComponent(query)}&entity=song&limit=20&media=music&country=US`;
+        const response = await fetch(url);
+        const data = await response.json();
+        return mapApiResults(data.results || [], query);
+    } catch (error) {
+        console.error("iTunes search failed:", error);
+        return [];
+    }
+}
+
 function renderSongs(list) {
     songList.innerHTML = "";
     resultCount.textContent = `Showing ${list.length} ${list.length === 1 ? "song" : "songs"}`;
 
     if (!list.length) {
-        songList.innerHTML = `<li class="song-item"><div class="song-meta"><p class="song-title">No matching songs found.</p><p class="song-subtitle">Try another search or upload a song.</p></div></li>`;
+        songList.innerHTML = `<li class="song-item"><div class="song-meta"><p class="song-title">No matching songs found.</p><p class="song-subtitle">Try another search.</p></div></li>`;
         return;
     }
 
@@ -110,7 +89,7 @@ function renderSongs(list) {
         meta.innerHTML = `
       <p class="song-title">${song.highlightedTitle || song.title}</p>
       <p class="song-subtitle">${song.highlightedArtist || song.artist} · ${song.highlightedGenre || song.genre}
-        <span class="tag">${song.source || "iTunes"}${song.full ? " · Full" : " · Preview"}</span>
+        <span class="tag">${song.source || "Upload"}${song.full ? " · Full" : " · Preview"}</span>
       </p>
     `;
 
@@ -126,8 +105,24 @@ function renderSongs(list) {
         queueButtonItem.className = "queue";
         queueButtonItem.addEventListener("click", () => addToQueue(song));
 
+        const downloadItem = document.createElement("a");
+        downloadItem.className = "download-button";
+        downloadItem.textContent = song.full ? "Download" : "Download Preview";
+        downloadItem.href = song.url;
+        downloadItem.target = "_blank";
+        downloadItem.setAttribute("download", sanitizeFileName(`${song.title}-${song.artist}`) + ".mp3");
+
+        const youtubeLink = document.createElement("a");
+        youtubeLink.className = "youtube-button";
+        youtubeLink.textContent = "YouTube";
+        youtubeLink.href = `https://www.youtube.com/results?search_query=${encodeURIComponent(song.title + " " + song.artist)}`;
+        youtubeLink.target = "_blank";
+        youtubeLink.rel = "noopener noreferrer";
+
         actions.appendChild(playButton);
         actions.appendChild(queueButtonItem);
+        actions.appendChild(downloadItem);
+        actions.appendChild(youtubeLink);
         listItem.appendChild(meta);
         listItem.appendChild(actions);
         songList.appendChild(listItem);
@@ -256,54 +251,20 @@ function handleDrop(files) {
     handleFiles(files);
 }
 
-function mapApiResults(results, query) {
-    return results.map(result => ({
-        id: `itunes-${result.trackId}`,
-        title: result.trackName,
-        artist: result.artistName,
-        genre: result.primaryGenreName || "Music",
-        url: result.previewUrl,
-        source: "iTunes",
-        full: false,
-        highlightedTitle: highlightText(result.trackName, query),
-        highlightedArtist: highlightText(result.artistName, query),
-        highlightedGenre: highlightText(result.primaryGenreName || "Music", query)
-    }));
-}
-
-async function fetchItunesSongs(query) {
-    try {
-        const url = `${ITUNES_API_URL}?term=${encodeURIComponent(query)}&entity=song&limit=20&media=music&country=US`;
-        const response = await fetch(url);
-        const data = await response.json();
-        return mapApiResults(data.results || [], query);
-    } catch (error) {
-        console.error("iTunes search failed:", error);
-        return [];
-    }
-}
-
 async function performSearch() {
     const query = searchInput.value.trim();
-    const source = sourceFilter.value;
-
     if (!query) {
-        if (source === "itunes") {
-            renderSongs([]);
-        } else {
-            renderSongs(getLibrary());
-        }
+        renderSongs([]);
         return;
     }
 
     resultCount.textContent = "Loading results...";
-    const [apiSongs, localResults] = await Promise.all([
-        source !== "library" ? fetchItunesSongs(query) : Promise.resolve([]),
-        source !== "itunes" ? Promise.resolve(searchLocalSongs(query)) : Promise.resolve([])
+    const [apiResults, uploadResults] = await Promise.all([
+        fetchItunesSongs(query),
+        Promise.resolve(searchUploadSongs(query))
     ]);
 
-    const combined = [...localResults, ...apiSongs];
-    renderSongs(combined);
+    renderSongs([...uploadResults, ...apiResults]);
 }
 
 function handleUpload(event) {
@@ -315,7 +276,6 @@ searchButton.addEventListener("click", performSearch);
 searchInput.addEventListener("keydown", event => {
     if (event.key === "Enter") performSearch();
 });
-sourceFilter.addEventListener("change", performSearch);
 queueButton.addEventListener("click", () => {
     if (currentSong) addToQueue(currentSong);
 });
